@@ -64,7 +64,7 @@ class DS3231:
         assert (trim >= 0) and (trim <= 255), "'Set Timing' trim value {0} is out of range".format(trim)
 
         b = bytes([trim-128 & 0xff])
-        print("Setting DS3231 Ageing Offset to 0x{0:02X}".format(b[0]))
+        # print("Setting DS3231 Ageing Offset to 0x{0:02X}".format(b[0]))
         self.Write_Reg(Aging_Reg, b[0])    
         
 
@@ -79,7 +79,7 @@ class DS3231:
         Calendar[0] = self.BCD_Convert_DEC(self.Read_Year_BCD())
         Calendar[1] = self.BCD_Convert_DEC(self.Read_Month_BCD())
         Calendar[2] = self.BCD_Convert_DEC(self.Read_Date_BCD())
-        return Calendar
+        return tuple(Calendar)
         
     '''Year_Reg     0x06                            '''
     def Read_Year_BCD(self):
@@ -129,7 +129,7 @@ class DS3231:
 
     '''Sec            0x00                               '''
     def Set_Time_Sec(self, sec):
-        print("Setting second=",sec)
+        # print("Setting second=",sec)
         data = self.DEC_Convert_BCD(sec)
         self.Write_Reg(Seconds_Reg,data & 0x7F)
     
@@ -146,5 +146,13 @@ class DS3231:
         hr = self.Read_Time_Hour()
         min = self.Read_Time_Min()
         sec = self.Read_Time_Sec()
-        return hr,min,sec
-    
+        return (hr,min,sec) 
+             
+    def set_localtime(self, dt):
+        # dt is the date_time tuple as per micropython time module
+        self.Set_Calendar(dt[0], dt[1], dt[2])
+        self.Set_Time(dt[3], dt[4], dt[5])
+        
+    def localtime(self):        
+        dt = tuple(self.Read_Calendar()) + self.Read_Time() + (0,0)
+        return dt

@@ -5,7 +5,7 @@
 #=============================================================
 #=============================================================
 #=============================================================
-
+from collections import OrderedDict
 import json
 
 # GPIO Pin Numbers for LCD
@@ -30,18 +30,63 @@ RTC_1HZ_PIN = 18
 
 
 # Global Variables
+
 settings = {
-    "alarm_hour": 7,
-    "alarm_min": 30,
-    "alarm_on": 0,
-    "font": 1,
-    "brightness" : 5,
-    "rgb_mode": 1,
-    "24_hour" : 1,
-    "show_secs" : 1,
-    "adjust_timing" : 128
+    "alarm_on": "No",
+    "alarm_hour": '6',
+    "alarm_min": '30',
+    "active_font": "nixie",
+    "nixie": "#ff7b00",
+    "dot": "#ff0000",
+    "7seg": "#00ffff",
+    "brightness" : "50",
+    "led_color": "#ff7b00",
+    "led_alarm_color": "#cccccc",
+    "24_hour" : "24",
+    "show_secs" : "No",
+    "show_date" : "No",
+    "utc_offset" : "0",
+    "dst_mode": "auto_eu",
+    "adjust_timing" : "128"
 }
 
+
+# ordered dictionary to preserve dropdown sequence
+dst_options = OrderedDict([ 
+    ("dst_off", "DST Off"),
+    ("dst_on", "DST On"),
+    ("auto_eu", "Auto EU"),
+    ("auto_na", "Auto NA")
+    ])
+
+"""
+tags are used to define the browser user interface
+first touple element is key to settings dictionary
+second element is 'R' if radio button,  'T' if text field
+'F' if font selection, '-' if blank line seperator
+"""
+
+tags = ( 
+            ('alarm_on', 'R', 'Alarm Enabled', 'Yes', 'No'),  
+            ('alarm_hour', 'N', 'Alarm hour', 1, 23),
+            ('alarm_min', 'N', 'Alarm minute', 0, 59),
+            ('', '-'),
+            ('active_font', 'F','Font', 'nixie:Nixie', 'dot:Dot Matrix', '7seg:7 Segment'),
+            ('brightness', 'N','Brightness %', 1, 100),
+            ('', '-'),
+            ('led_color', 'L','LED color'),
+            ('', '-'),
+            ('24_hour', 'R','Hours Format', '12', '24'),
+            ('show_secs', 'R','Show Seconds', 'Yes', 'No'),
+            ('show_date', 'R','Show Date', 'Yes', 'No'),
+            ('utc_offset', 'N', 'Offset from UTC', -12, 12),
+            ('dst_mode', 'D', 'DST Mode', dst_options),
+            # ('', '-'),
+            # ('adjust_timing', 'N', 'Trim timing', 0, 255)
+       )
+
+
+    
 tick = True
 
 
@@ -55,10 +100,11 @@ tick = True
 
 # Save all settings to "disk".
 def save_settings():
+    print("saving settings")
     with open("settings.json", "w") as f:
         json.dump(settings, f)
  
- 
+            
 # Load all settings from "disk"
 def load_settings():
     global settings
@@ -66,16 +112,25 @@ def load_settings():
         with open("settings.json", "r") as f:
             settings = json.load(f)
     except:
-        print("Unable to load settings.json . Creating new file")
+        print("Unable to load settings.json. Creating new file")
+        print(settings)
         save_settings()
-
 
 # Retrieve a single setting value from memory
 def get_setting(key):
-    if key in settings:
-        return int(settings[key])
-    else:
-        raise Exception("Key '" + key + "' not found in settings. Delete file settings.json and try again")
+    try:
+        v = settings[key]  
+        return v
+    except KeyError:
+        print("Key '{}' not found in settings. Delete file settings.json and try again".format(key))
+
+# set a single setting value
+def set_setting(key, value):
+    try:
+        settings[key] = value     
+    except KeyError:
+        print("Key '{}' not found in settings, unable to save".format(key))
+    
 
 
 # Update a single setting value in memory and "disk"

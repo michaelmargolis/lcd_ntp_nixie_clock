@@ -6,520 +6,309 @@ import display
 import ds3231
 import leds
 
+import wifi, secrets
+import ntptime
+import time_utils
+from button import Button
 
-#=======================================================================
+from webserver import my_HTTPserver
+
+import micropython # for memory diags only
+
+micropython.alloc_emergency_exception_buf(100)  # Allocate buffer for interrupt exceptions
+
+"""
+WiFi/NTP code connects to router using credentials in the secrets.py file
+If connected, time_utils module attempts to set the machine.RTC using NTP time
+See wifi and time_utils modules for more info  
+"""
+net = wifi.wifi(10)
+
+
 #=======================================================================
 # Helper Functions
 #=======================================================================
-#=======================================================================
 
-
-def rtc_1hz_interrupt(pin):
-    global tick
-    tick = True
-    
-
-def get_button():
-    if (btn_mode_pin.value()):
-        return "M"
-    
-    if (btn_left_pin.value()):
-        return "L"
-    
-    if (btn_right_pin.value()):
-        return "R"
-    
-    else:
-        return None
-
-    
-    
-def adjust_simple_setting(setting_name, min_value, max_value, display_function):
-    value = settings.get_setting(setting_name)
-    new_value, timeout = set(value, min_value, max_value, display_function)
-    settings.save_setting(setting_name, new_value)
-
-    return new_value, timeout
-
-
-# Displays a decimal number at the specified position on the LCDs
-def display_int(number, position, digits):
-    for i in range(position+digits-1, position-1, -1):
-        LCD.select_digit(i)
-        LCD.display_digit(number%10)
-        number = number / 10
-        
-
-
-# Allows the user to change a setting value with the up and down buttons.
-#
-# Returns the new value and True if no button pressed after a few seconds
-# or the new value and False if the mode button is pressed
-#
-# Calls the callback display_function each time the value is changed to show it on
-# the LCDs in whatever format is appropriate for the data type
-def set(initial_value, min_value, max_value, display_function):
-    new_value = initial_value
-    previous_value = -1
-    start_time = time.ticks_ms() 
-    
-    while True:
-
-        # If a setting has changed. call the supplied function to display the new setting 
-        if (new_value != previous_value):
-            if (display_function):
-                display_function(new_value)
-                time.sleep(0.2)
-
-            previous_value = new_value            
-
-        # Respond to any button pressed
-        btn = get_button()
-                    
-        if (btn == "L"):  # UP Button Pressed. Increment the value
-            start_time = time.ticks_ms() 
-            new_value = new_value+1
-            if (new_value > max_value):
-                new_value = min_value
-                
-        elif (btn == "R"):  # DOWN button pressed. Decrement the value
-            start_time = time.ticks_ms() 
-            new_value = new_value-1
-            if (new_value < min_value):
-                new_value = max_value
-                
-        elif (btn == "M"):  # Mode Button Pressed. Return
-            break
-
+  
+def alarm_callback(caller, is_alarm_toggle):
+    # toggle alarm on/off if is_alarm_toggle, else turn off buzzer if on
+    # mode button held for more than 2 seconds sets is_alarm_toggle True
+    if is_alarm_toggle:
+        if settings.get_setting("alarm_on") == "No":
+             settings.set_setting("alarm_on", 'Yes')
         else:
-            time.sleep(0.1)
+             settings.set_setting("alarm_on", 'No')
+        print("toggled alarm state to {}".format(settings.settings["alarm_on"]))
+        clock.update_info_text() 
+    clock.alarm.reset_trigger() 
+    print("clock trigger reset")
+
+def button_callback(caller, is_long_press):
+    if caller.name == "toggle_seconds":
+        if settings.get_setting("show_secs") == "No":
+            settings.set_setting("show_secs", "Yes")
+        else:
+            settings.set_setting("show_secs", "No")
+    elif caller.name == "sequence_font":
+        active_font = settings.get_setting("active_font")    
+        if active_font == "nixie":
+            settings.set_setting("active_font", "dot")
+        elif active_font =="dot":
+            settings.set_setting("active_font", "7seg")
+        elif active_font =="7seg":
+            settings.set_setting("active_font", "nixie")
+    clock.update_display_state()       
+    # in this version, settings.save_settings() is not called
+    
+#====================================================================
+# Alarm class
+#====================================================================
+class Alarm:
+    def __init__(self, leds, get_setting):
+        self.leds = leds
+        self.get_setting = get_setting
+        self.buzzer = PWM(Pin(settings.BUZZER_PIN, Pin.OUT))
+        self.buzzer.duty_u16(0)
+        self.triggered = False
+
+    def check(self, hour, minute, sec):
+        """sounds buzzer if given time matches the alarm time and if the trigger is enabled."""
+        alarm_enabled = self.get_setting("alarm_on")
+        alarm_hour = int(self.get_setting("alarm_hour"))
+        alarm_min = int(self.get_setting("alarm_min"))
+        # print(alarm_enabled, alarm_hour,hour, alarm_min,minute,sec)
+        if alarm_enabled and alarm_hour == hour and alarm_min == minute and sec == 0:
+            self.triggered = True
+        if self.triggered:
+            if (sec % 2) == 0:
+                self.leds.rgb_strip.fill((255,255,255))
+            else:
+                leds.rgb_strip.fill((0,0,0))
+            self.leds.rgb_strip.write()
+            
+            self.buzzer.duty_u16(32768)
+            for i in range(0,4):
+                self.buzzer.freq(1500)
+                time.sleep(0.05)
+                self.buzzer.freq(2400)
+                time.sleep(0.05)
+            self.buzzer.duty_u16(0)             
         
-        # if no buttons pressed for a while, timeout and return
-        if time.ticks_ms() > (start_time + 5000): # 5 seconds
-            return new_value, True
+    def reset_trigger(self):
+        # Stop the alarm
+        self.buzzer.duty_u16(0)
+        leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("brightness")))
+        self.triggered  = False
+        
+       
+
+#====================================================================
+# Clock class
+#====================================================================
+class Clock():
+    tick = True # static flag to indcated 1hz isr trigger
     
-    return new_value, False
+    def __init__(self, lcd, leds, get_setting):
+        self.lcd = lcd
+        self.get_setting = get_setting # accesser for values in the settings module
+        self.alarm = Alarm(leds, get_setting)
+        self.active_font = None
+        self.info_text = None # text on digit 5 when not showing seconds
+        self.digits_cache = [None]*6
+        self.init_rtc()
+        
+    def init_rtc(self):
+        self.rtc_ds3231 = ds3231.DS3231(add = 0x68)
+        trim = int(self.get_setting("adjust_timing"))
+        print("setting rtc trim to {}".format(trim))
+        self.rtc_ds3231.Set_Timing(trim)
+        # Set up the handler to recieve a regular interrupt on the 1Hz output from the DS3231
+        rtc_1Hz_pin   = Pin(settings.RTC_1HZ_PIN, Pin.IN)
+        rtc_1Hz_pin.irq(trigger=Pin.IRQ_RISING, handler=self.rtc_1hz_isr)
+     
+  
+    def rtc_setter(self, dt):
+        # syncs ds3231 with the given time as python datetime tuple
+        self.rtc_ds3231.set_localtime(dt)
+        
+    @staticmethod
+    def rtc_1hz_isr(pin):
+        Clock.tick = True
+  
+    def show_digit_if_changed(self, digit, pos):
+        if digit != self.digits_cache[pos]:            
+            self.lcd.select_digit(pos)
+            if digit is None:
+                self.lcd.fill(self.lcd.black)
+                self.digits_cache[pos] = None
+            else:
+                self.lcd.display_digit(digit)
+                self.digits_cache[pos] = digit       
+            self.lcd.show()            
 
-
-#===================================================================
-#===================================================================
-#===================================================================
-# Callback functions used when changing settings
-#===================================================================
-#===================================================================
-#===================================================================
-
-def fn_display_brightness(value):
-    LCD.set_brightness(value)        
-    display_int(value,4,2)
     
+    def extract_digits(self, value):
+        # Assumes value is always two digits
+        return [value // 10, value % 10]
 
-def fn_display_rgb_mode(value):
-    leds.set_rgb_pattern(value)
-    display_int(value,4,2)
-  
-  
-def fn_display_true_false(value):
-    display_int(value,5,1)
-  
-  
-def fn_display_12_24(value):
-    if value==0:
-        display_int(12,4,2)
-    else:
-        display_int(24,4,2)
-
-
-def fn_display_font(value):
-    LCD.set_font(value)
-    display_int(value,4,2)
-    LCD.select_digit(0)
-    LCD.display_text(mode)
-
-    
-def fn_display_hour(value):
-    display_int(value,2,2)
-    
-    
-def fn_display_min(value):
-    display_int(value,4,2)
-  
-  
-def fn_display_sec(value):
-    display_int(value,4,2)
-  
-
-def fn_display_adjust_timing(value):    
-    RTC.Set_Timing(value)
-    display_int(value,3,3)
-   
-   
-#==============================================================================
-#==============================================================================
-#==============================================================================
-# Functions used to change the clock's settings
-#==============================================================================
-#==============================================================================
-#==============================================================================
+    def show_time(self, hr, mins, sec):
+        digits = self.extract_digits(hr) + self.extract_digits(mins) + self.extract_digits(sec)
+        if self.get_setting("show_secs") == 'No':              
+            self.show_digit_if_changed(digits[3], 4)               
+            # Show tens of minute
+            self.show_digit_if_changed(digits[2], 3)
+            # show blinking colon
+            self.lcd.show_colon(2, digits[5]%2) # on every other second
+            self.digits_cache[2] = None # force digit display if changing to show_secs
+            # show hour. Suppress leading zero if in 12 hour mode
+            self.show_digit_if_changed(digits[1], 1)
+            
+            if self.get_setting("24_hour")=="24" or hr > 9:
+                self.show_digit_if_changed(digits[0], 0)
+            else:
+                self.show_digit_if_changed(None, 0)
+            self.update_info_text()       
       
-def set_alarm_on_off():
-    _, timeout = adjust_simple_setting("alarm_on", 0, 1, fn_display_true_false)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Alarm Hour")
-        
-
-def set_alarm_hour():
-    _, timeout = adjust_simple_setting("alarm_hour", 0, 23, fn_display_hour)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Alarm Min")
-        
-        
-def set_alarm_min():
-    _, timeout = adjust_simple_setting("alarm_min", 0, 59, fn_display_min)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Hour")
-        
-        
-def set_hour():
-    hour,_,_ = RTC.Read_Time()
-    new_value, timeout = set(hour, 0, 23, fn_display_hour)
-    RTC.Set_Time_Hour(new_value)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Min")
-        
-        
-def set_minute():
-    _,minute,_ = RTC.Read_Time()
-    new_value, timeout = set(minute, 0, 59, fn_display_min)
-    RTC.Set_Time_Min(new_value)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Second")
-
-        
-def set_second():
-    _,_,second = RTC.Read_Time()
-    old_value = second
-    new_value, timeout = set(second, 0, 59, fn_display_sec)
-    if new_value != old_value:
-        RTC.Set_Time_Sec(new_value)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Font")
-        
-def set_font():
-    _, timeout = adjust_simple_setting("font", 1, 9, fn_display_font)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set Light Level")
-
-
-def set_brightness():    
-    _, timeout = adjust_simple_setting("brightness", 1, 10, fn_display_brightness)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Set RGB Mode")
-
-
-def set_rgb_mode():
-    
-    _, timeout = adjust_simple_setting("rgb_mode", 0, 10, fn_display_rgb_mode)
-
-    if (timeout):
-        return("Time")
-    else:
-        return("Set 12/24 Hours")
-
-
-def set_12_24():
-    _, timeout = adjust_simple_setting("24_hour", 0, 1, fn_display_12_24)
-    
-    if (timeout):
-        return("Time")
-    else:
-        return("Show Secs")
-
-
-def set_show_seconds():
-    _, timeout = adjust_simple_setting("show_secs", 0, 1, fn_display_true_false)
-    if (timeout):
-        return("Time")
-    else:
-        return("Adjust Timing")
-
-
-def set_adjust_timing():
-    adjust_simple_setting("adjust_timing", 0, 255, fn_display_adjust_timing)
-    return("Time")
-
-
-
-#====================================================================
-#====================================================================
-#====================================================================
-# Display the current time until a button is pressed
-#====================================================================
-#====================================================================
-#====================================================================
-
-def show_digit_if_changed(num, pos):
-    global previous_digits
-    
-    if num != previous_digits[pos]:
-        
-        LCD.select_digit(pos)
-
-        if num is None:
-            LCD.fill(LCD.black)
-            previous_digits[pos] = None
         else:
-            x = int(num)
-            LCD.display_digit(x)
-            previous_digits[pos] = x
-        
-        LCD.show()            
-
+            # 6-digit mode : display hours, minutes and seconds
+            for idx, digit in enumerate(digits):
+                self.show_digit_if_changed(digit, idx)
+     
+    def update_info_text(self):
+        info_text = ""
+        if self.get_setting("show_date") == 'Yes':
+            month, day = self.rtc_ds3231.localtime()[1:3]
+            month_str = time_utils.months[month]
+            info_text += "{} {} ".format(month_str, day)
+        if self.get_setting("alarm_on") == 'Yes':
+            info_text += " Alarm {0}:{1:02d}".format(int(self.get_setting("alarm_hour")),
+                       int(self.get_setting("alarm_min")))
+        ##else:
+        ##    info_text += ("Alarm OFF")
+        # only update if changed
+        if info_text != self.info_text:
+            self.lcd.select_digit(5) 
+            self.lcd.display_text(info_text)
+            self.info_text = info_text
+  
+    def update_display_state(self):
+        self.lcd.set_brightness(int(self.get_setting("brightness")))
+        if self.active_font != self.get_setting("active_font"):
+            # print("old font",self.active_font, "->", self.get_setting("active_font"))
+            self.digits_cache = [None]*6
+        self.active_font = self.get_setting("active_font")
+        hex_color = self.get_setting(self.active_font)
+        self.lcd.set_font(self.active_font, hex_color)
+        self.info_text = None
+        self.update_info_text()
+ 
+    def show_ip_addr(self, addr, wait_time):
+        octets= ["This IP Addr",] + addr.split(".")
+        for i in range(len(octets)):
+            self.lcd.select_digit(i) 
+            self.lcd.display_text(octets[i])
+        time.sleep(wait_time)
     
-# 4-digit mode : display hours, minutes and flashing colon
-def show_time_4_digits(hr, min, sec):
-
-    # Show minute and alarm on/off and alarm time once a minute
-    x = int(min%10)
+    def service(self):
+        # call this once per tick
+        hr, mins, sec = self.rtc_ds3231.localtime()[3:6]
+        self.show_time(hr, mins, sec)
+        self.alarm.check(hr, mins, sec)
+     
+def web_callback(data):
+    # update settings with k,v pairs in the given dictionary
+    changed = 0
+    for k,v in data.items():
+        if v[:3] == '%23': # convert html representaion of # symbol
+            v = '#' + v[3:]
+        if settings.settings[k] != v:
+            changed += 1
+            print('settings change for', k, 'old val = ', settings.settings[k], 'new val' ,v)
+            settings.settings.update({k:v})
+        if k== 'utc_offset':
+             print("whaa utc offset only for testing !!!" , v)
+    if changed:
+        print("updated {} items".format(changed))        
+        settings.save_settings()
+        leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("brightness")))
+        clock.update_display_state()
     
-    if (x != previous_digits[4]):
-        LCD.select_digit(5)
-        if bool(settings.get_setting("alarm_on")):            
-            LCD.display_text("Alarm ON  {0}:{1:02d}".
-                format(settings.get_setting("alarm_hour"),
-                       settings.get_setting("alarm_min")))
-        else:
-            LCD.display_text("Alarm OFF")
-        
-        LCD.select_digit(4)
-        previous_digits[4] = x
-        LCD.display_digit(x)
-        
-    # Show tens of minute
-    show_digit_if_changed(min/10, 3)
-
-    # show blinking colon
-    LCD.show_colon(2, sec%2)
-
-    # show hour. Suppress leading zero if in 12 hour mode
-    show_digit_if_changed(hr%10, 1)
+    micropython.mem_info()         
+    # print('after post', settings.settings)
     
-    if (settings.get_setting("24_hour")==1) or (hr>9):
-        show_digit_if_changed(hr/10, 0)
-    else:
-        show_digit_if_changed(None, 0)
-
-    LCD.show()
-
-        
-        
-# 4-digit mode : display hours, minutes and seconds
-def show_time_6_digits(hr, mins, sec):
-
-    show_digit_if_changed(sec%10, 5)
-    show_digit_if_changed(sec/10, 4)
-    show_digit_if_changed(mins%10, 3)
-    show_digit_if_changed(mins/10, 2)
-    show_digit_if_changed(hr%10, 1)
-    show_digit_if_changed(hr/10, 0)
-
-
-
-#=======================================================================
-#=======================================================================
-#=======================================================================
-# Displays the current time and sounds the alarm if necessary
-#=======================================================================
-#=======================================================================
-#=======================================================================
-def show_time():
-    global tick
-    global previous_digits
-    
-    sound_alarm = False    
-    tick = True
-    previous_digits = [None,None,None,None,None,None]
-    
-    while True:
-        
-        if tick:  # wait for the next 1 second tick
-            
-            tick = False
-            hr24,min,sec = RTC.Read_Time()
-
-            # Check if it's time to sound the alarm.
-            if (sec == 0) and \
-               (settings.get_setting("alarm_on") == 1) and \
-               (settings.get_setting("alarm_hour") == hr24) and \
-               (settings.get_setting("alarm_min") == min):                    
-                print("WAKEY WAKEY!")
-                sound_alarm = True
-                                
-            if sound_alarm:
-                if (sec % 2) == 0:
-                    leds.rgb_strip.fill((255,255,255))
-                else:
-                    leds.rgb_strip.fill((0,0,0))
-                leds.rgb_strip.write()
-                
-                buzzer.duty_u16(32768)
-                for i in range(0,4):
-                    buzzer.freq(1500)
-                    time.sleep(0.05)
-                    buzzer.freq(2400)
-                    time.sleep(0.05)
-                buzzer.duty_u16(0)
-                    
-            # Display the current time
-            hr = hr24
-                
-            if settings.get_setting("24_hour"):
-                # 24 hour clock. Show time as 0-23
-                hr = hr24
-            else:
-                # 12 hour clock. Show time as 1-12
-                hr = hr24 % 12                
-                if (hr == 0):                
-                    hr = 12
-
-            if settings.get_setting("show_secs") == 1:            
-                show_time_6_digits(hr,min,sec)
-            else:
-                show_time_4_digits(hr,min,sec)
-
-            
-        # Here would be a good place to animate the LEDs etc
-        
-        if sound_alarm:            
-            if get_button() is not None:
-                
-                # Stop the alarm
-                sound_alarm = False
-                buzzer.duty_u16(0)
-                leds.set_rgb_pattern(settings.get_setting("rgb_mode"))
-                
-                # Wait for button release
-                while True:
-                    time.sleep(0.2)
-                    if get_button() is None:
-                        break
-                    
-        else:
-            if get_button() == "M":
-                return("Alarm On/ Off")
-                
-
-
-#=======================================================================
-#=======================================================================
 #=======================================================================
 # Main Body
 #=======================================================================
-#=======================================================================
-#=======================================================================
 
 settings.load_settings()
-leds.set_rgb_pattern(settings.get_setting("rgb_mode"))
 
-btn_mode_pin  = Pin(settings.MODE_PIN, Pin.IN)
-btn_left_pin  = Pin(settings.LEFT_PIN, Pin.IN)
-btn_right_pin = Pin(settings.RIGHT_PIN, Pin.IN)
-rtc_1Hz_pin   = Pin(settings.RTC_1HZ_PIN, Pin.IN)
+active_font = settings.get_setting("active_font")
+hex_color = settings.get_setting(active_font)
+lcd = display.Display(active_font, hex_color)
+lcd.clear()
 
-LCD = display.Display()
-LCD.set_font(settings.get_setting("font"))
+t_utils = time_utils.Time_utils(int(settings.get_setting("utc_offset")))
 
-RTC = ds3231.DS3231(add = 0x68)
-RTC.Set_Timing(settings.get_setting("adjust_timing"))
+clock = Clock(lcd, leds, settings.get_setting)
 
-buzzer = PWM(Pin(settings.BUZZER_PIN, Pin.OUT))
-buzzer.duty_u16(0)
-
-# Set up the handler to recieve a regular interrupt on the 1Hz output from the DS3231
-rtc_1Hz_pin.irq(trigger=Pin.IRQ_RISING, handler=rtc_1hz_interrupt)
-
+Button.append("alarm", settings.MODE_PIN , pull=None, callback=alarm_callback, long_press_time=2000)  # Set long press dur in ms)
+Button.append("sequence_font", settings.LEFT_PIN , pull=None, callback=button_callback)
+Button.append("toggle_seconds", settings.RIGHT_PIN , pull=None, callback=button_callback) 
 
 #===================================================================
 # The main control loop starts here
 #===================================================================
-mode = "Time"
-tick = True
 
+net.set_hostname('nixieclock') # todo needs testing
+
+for attempts in range(2):
+    lcd.set_brightness(100) # max brightness while showing startup status
+    lcd.select_digit(5) 
+    lcd.display_text("Wait for WiFi")
+    try:
+        status = net.connect(secrets.SSID, secrets.PASSWORD)
+        if net.status_text(status) == 'OK':
+            if net.is_connected():
+                lcd.display_text("Net OK")
+                if t_utils.check_sync(clock.rtc_setter):
+                    lcd.display_text("Synced with NTP")
+                else:
+                    lcd.display_text("NTP not Avail")
+                webserver = my_HTTPserver(settings, web_callback)
+                clock.show_ip_addr(net.this_ip, 4) # show ip address on clock for 4 seconds at startup
+                break
+        else:
+            lcd.display_text(net.status_text(status)) # show error if not connected
+            time.sleep(1)
+    except network.EADDRINUSE:
+        lcd.select_digit(4)
+        lcd.display_text("Net addr err")
+        lcd.select_digit(4)
+        lcd.display_text("restrt clock")
+        time.sleep(5)
+            
+    
+if not net.is_connected():
+    lcd.display_text("Net not Avail")
+    print("ds3231", clock.rtc_ds3231.localtime())
+    time.sleep(2) # just to show the above text 
+
+   
+
+micropython.mem_info() # only for initial memory tests 
 
 while True:
-    LCD.set_brightness(settings.get_setting("brightness"))
-    LCD.clear()
-
-
-    if (mode == "Time"):
-        mode = show_time()
-    else:
-        LCD.select_digit(0)
-        LCD.display_text(mode)
-
-        if mode == "Alarm On/ Off":
-            mode = set_alarm_on_off()
-            
-        elif mode == "Set Alarm Hour":
-            mode = set_alarm_hour()
-            
-        elif mode == "Set Alarm Min":
-            mode = set_alarm_min()
-            
-        elif mode == "Set Hour":
-            mode = set_hour()
-            
-        elif mode == "Set Min":
-            mode = set_minute()
-            
-        elif mode == "Set Second":
-            mode = set_second()
-            
-        elif mode == "Set Font":
-            mode = set_font()
-            
-        elif mode == "Set Light Level":
-            mode = set_brightness()
-            
-        elif mode == "Set RGB Mode":
-            mode = set_rgb_mode()
-            
-        elif mode == "Set 12/24 Hours":
-            mode = set_12_24()
-            
-        elif mode == "Show Secs":
-            mode = set_show_seconds()
-            
-        elif mode == "Adjust Timing":
-            mode = set_adjust_timing()
-            
-        else:
-            print("Unexpected mode :",mode)
-            mode = "Time"
-    
+    if Clock.tick:
+        if net.is_connected():
+            if t_utils.check_sync(clock.rtc_setter):
+                print("clock synced")
+        clock.service() # update display and check alarm
+        Clock.tick = False
+    if net.is_connected():    
+        webserver.listen() # check and handle web UI request 
+    Button.service() # handle any pressed buttons
+    time.sleep(0.05)  # Polling interval
     
 # The end.
+
+

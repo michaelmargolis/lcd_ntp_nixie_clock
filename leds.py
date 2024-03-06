@@ -5,10 +5,25 @@ import settings
 
 rgb_strip = neopixel.NeoPixel(Pin(settings.NEOPIXEL_PIN), 6)
 
+    
+# color value is a hex string as per web format
+def set_color(hex_color, brightness_percent=100):
+    if hex_color.startswith('#'): 
+        hex_color = hex_color[1:]  # Strip the '#' character if present
+    r, g, b = int(hex_color[:2], 16), int(hex_color[2:4], 16), int(hex_color[4:], 16)
+    if brightness_percent < 100:
+        factor = brightness_percent / 100
+        r = int(r*factor)
+        g = int(g*factor)
+        g = int(g*factor)
+    rgb_strip.fill((r, g, b))
+    rgb_strip.write()
+  
+# the code below is not used in this version
+
 full = 40   # RGB LCD brightness. 10=low, 255=max.
 half = int(full / 2)
-    
-    
+
 #-----------------------------------------------------------------------------
 # Converts HSV color to rgb tuple and returns it.
 # The logic is almost the same as in Adafruit NeoPixel library:

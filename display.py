@@ -26,7 +26,10 @@
 # By Gary Bleads, June 2023    gary@bleads.co.uk
 #===============================================
 
-
+# pico W has less ram than non wifi pico
+# so must create buffers before any imports or other code
+_display_buffer = bytearray(240 * 135 * 2)
+ 
 from machine import Pin,SPI,PWM
 import framebuf
 import time
@@ -185,6 +188,8 @@ class Display(framebuf.FrameBuffer):
 
     def rgb_to_int (self,r,g,b):
         
+        # return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+        
         r4 = (r & 0x80) >> 7
         r3 = (r & 0x40) >> 6
         r2 = (r & 0x20) >> 5
@@ -211,9 +216,17 @@ class Display(framebuf.FrameBuffer):
                                     
         return int(rgb565)
 
+    def hex_to_rgb565(self, hex_color):   
+        if hex_color.startswith('#'):
+            hex_color = hex_color[1:]  # Strip the '#' character if present
+        r, g, b = int(hex_color[:2], 16), int(hex_color[2:4], 16), int(hex_color[4:], 16)
+        return self.rgb_to_int(r,g,b)
+        # Convert the RGB values to RGB565
+        rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+        return rgb565
 
     # Constructor
-    def __init__(self):
+    def __init__(self, active_font, hex_color):
 
         self.width = 240
         self.height = 135
@@ -227,7 +240,7 @@ class Display(framebuf.FrameBuffer):
         self.yellow=   self.rgb_to_int(255,255,0)
         self.cyan  =   self.rgb_to_int(0,255,255)
         
-        self.text_fg = self.amber
+        self.text_fg = self.hex_to_rgb565(hex_color)
         self.text_bg = self.black
         
         self.selected_digit = 0;
@@ -256,7 +269,8 @@ class Display(framebuf.FrameBuffer):
         self.dc.value(1)
         
         # Set up the frame buffer
-        self.buffer = bytearray(self.height * self.width * 2)
+        global _display_buffer
+        self.buffer = _display_buffer
         super().__init__(self.buffer, self.width, self.height, framebuf.RGB565)
         
         # Wiggle the LCD reset line
@@ -267,20 +281,21 @@ class Display(framebuf.FrameBuffer):
             self.select_digit(digit)
             self.init()
             
-        self.set_font(settings.get_setting("font"))
+        self.set_font(active_font, hex_color)
         
         self.clear()
         
 
-    # Change the backlight level from 0 to 10
+    # Change the backlight level from 0 to 100
+    # note in previous version this ranged from 0 to 10
     def set_brightness(self, level):        
         if (level < 0):
             level = 0
             
-        if (level > 10):
-            level = 10            
+        if (level > 100):
+            level = 100            
             
-        self.pwm.duty_u16(6550*level)
+        self.pwm.duty_u16(655*level)
     
     
     # Selects the current digit from 0 (left) to 5 (right)
@@ -331,45 +346,47 @@ class Display(framebuf.FrameBuffer):
 
     # Initialise the currently selected LCD
     def init(self):
-        self.write_cmd(0x36)
-        self.write_data(0x70)
+        self.write_cmd(0x36) # Set access mode (orientation, RGB/BGR order, etc.)
+        self.write_data(0x70) # Parameters for RGB color filter panel and screen rotation.
 
-        self.write_cmd(0x3A) 
-        self.write_data(0x05)
+        self.write_cmd(0x3A) # Set color format of the display interface.
+        self.write_data(0x05) # Set to 16-bit/pixel color mode.
 
-        self.write_cmd(0xB2)
-        self.write_data(0x0C)
-        self.write_data(0x0C)
-        self.write_data(0x00)
-        self.write_data(0x33)
-        self.write_data(0x33)
+        self.write_cmd(0xB2) # Set front and back porch periods for normal display mode.
+        self.write_data(0x0C) # Front porch
+        self.write_data(0x0C) # Back porch
+        self.write_data(0x00) # Idle mode off
+        self.write_data(0x33) # Front porch of partial mode
+        self.write_data(0x33) # Back porch of partial mode
+        
 
-        self.write_cmd(0xB7)
-        self.write_data(0x35) 
+        self.write_cmd(0xB7) # Control the gate driving voltage.
+        self.write_data(0x35) # Gate control setting
 
-        self.write_cmd(0xBB)
-        self.write_data(0x19)
+        self.write_cmd(0xBB) # Set the VCOM voltage for contrast adjustment.
+        self.write_data(0x19) # VCOM setting
 
-        self.write_cmd(0xC0)
-        self.write_data(0x2C)
+        self.write_cmd(0xC0) #  Set the LCM inversion and refresh settings.
+        self.write_data(0x2C) # LCM control setting
 
-        self.write_cmd(0xC2)
-        self.write_data(0x01)
+        self.write_cmd(0xC2) # Enable VDV and VRH voltage control commands.
+        self.write_data(0x01) # Enable VDV and VRH
 
-        self.write_cmd(0xC3)
-        self.write_data(0x12)   
+        self.write_cmd(0xC3) # Set the voltage at which the display operates.
+        self.write_data(0x12) # VRH setting
 
-        self.write_cmd(0xC4)
-        self.write_data(0x20)
+        self.write_cmd(0xC4) # Set the amplitude of the display voltage.
+        self.write_data(0x20) # VDV setting
 
-        self.write_cmd(0xC6)
-        self.write_data(0x0F) 
+        self.write_cmd(0xC6) # Adjust the frame rate of the display in normal mode.
+        self.write_data(0x0F) # Frame rate control setting
 
-        self.write_cmd(0xD0)
-        self.write_data(0xA4)
-        self.write_data(0xA1)
+        self.write_cmd(0xD0) # Control the power settings for the display.
+        self.write_data(0xA4) # Setting for the DVDD voltage
+        self.write_data(0xA1) # Setting related to VCIRE, which is a voltage setting
 
-        self.write_cmd(0xE0)
+        self.write_cmd(0xE0) # Adjust the gamma curve of the display (positive).
+        # These values adjust the curve to control the brightness and color of the display positively.
         self.write_data(0xD0)
         self.write_data(0x04)
         self.write_data(0x0D)
@@ -385,7 +402,8 @@ class Display(framebuf.FrameBuffer):
         self.write_data(0x1F)
         self.write_data(0x23)
 
-        self.write_cmd(0xE1)
+        self.write_cmd(0xE1) # Adjust the gamma curve of the display (negative).
+        # These values adjust the curve to control the brightness and color of the display negatively.
         self.write_data(0xD0)
         self.write_data(0x04)
         self.write_data(0x0C)
@@ -400,10 +418,11 @@ class Display(framebuf.FrameBuffer):
         self.write_data(0x1F)
         self.write_data(0x20)
         self.write_data(0x23)
-        
-        self.write_cmd(0x21)
-        self.write_cmd(0x11)
-        self.write_cmd(0x29)
+
+        self.write_cmd(0x21) # Enable display color inversion.
+        self.write_cmd(0x11) # Exit sleep mode.
+        self.write_cmd(0x29) # Turn on the display.
+
 
 
     # Sends the entire frame buffer to the currently selected LCD
@@ -496,7 +515,6 @@ class Display(framebuf.FrameBuffer):
         
         self.show()
 
-
     # Loads a number image file onto the selected LCD,
     # i.e. display_digit(0) displays file "0.raw"
     #
@@ -543,7 +561,6 @@ class Display(framebuf.FrameBuffer):
                 if (line >> yy) & 0x1:
                     # add the pixel with a little spacing
                     self.blit(fb, yy*(pixelsize+6)+20, ii*pixelsize+6)
- 
         self.show()
         
 
@@ -587,46 +604,17 @@ class Display(framebuf.FrameBuffer):
             
         self.show()
         
-    def set_font(self, font):
-                
-        if font==1:
-            self.font_style = "Nixie"
-            self.fg_colour = self.amber
-        elif font==2:
-            self.font_style = "Dots"
-            self.fg_colour = self.yellow
-        elif font==3:
-            self.font_style = "Dots"
-            self.fg_colour = self.green
-        elif font==4:
-            self.font_style = "Dots"
-            self.fg_colour = self.cyan
-        elif font==5:
-            self.font_style = "Dots"
-            self.fg_colour = self.white
-        elif font==6:
-            self.font_style = "7seg"
-            self.fg_colour = self.red
-        elif font==7:
-            self.font_style = "7seg"
-            self.fg_colour = self.green
-        elif font==8:
-            self.font_style = "7seg"
-            self.fg_colour = self.cyan
-        elif font==9:
-            self.font_style = "7seg"
-            self.fg_colour = self.white
-        else:
-            print("Invalid font number:",font)
+    def set_font(self, font, hex_color):
+        self.font_style = font
+        self.fg_colour = self.hex_to_rgb565(hex_color)
+        # print("font style = {}, hex color{} rgb565 {}:".format(font, hex_color, self.fg_colour))
         
-    
     def display_digit(self, digit):
-        if self.font_style == "Nixie":
+        if self.font_style == "nixie":
             self.display_nixie(digit)
             
-        elif self.font_style == "Dots":
-            self.display_dots(digit)
-            
+        elif self.font_style == "dot":
+            self.display_dots(digit)            
         else:
             self.display_7seg(digit)
 
@@ -638,9 +626,18 @@ class Display(framebuf.FrameBuffer):
         if visible:
             self.ellipse(80, 70, 12, 12, self.fg_colour, True)
             self.ellipse(150, 70, 12, 12, self.fg_colour, True)
-            
         self.show()
-        
-            
+
+"""
+lcd = Display('7seg', "#ff0000")
+lcd.clear()
+lcd.set_font('7seg', "#ff0000")
+lcd.set_brightness(50)
+lcd.select_digit(5) 
+lcd.display_text("Await WiFi")
+lcd.select_digit(0) 
+lcd.display_digit(8)
+"""
+
                            
         
