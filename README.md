@@ -3,8 +3,10 @@ Pseudo Nixie LCD clock in Micropython for the Waveshare kit and Pi Pico W
 
 This project is based on the Pseudo Nixie clock by Gary Bleads: https://github.com/g0hjq/lcd_nixie_clock
 
-The version here  has automaic date and time setting synchronized with NTP and a web browser user interface to configure clock settings. 
+The version here has automaic date and time setting synchronized with NTP and a web browser user interface to configure clock settings. 
 A Pi Pico W is required. If you want to use the clock with a non WiFI pico or prefer a more retro experience then Gary's repo is the place to go.
+
+There are many changes in this fork so treat this version as early beta. Please raise an issue if you find a problem.
  
 ![image](https://github.com/g0hjq/lcd_nixie_clock/assets/37076748/554df180-edf5-486d-a488-68c63047eff1)
 

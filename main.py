@@ -225,8 +225,6 @@ def web_callback(data):
             changed += 1
             print('settings change for', k, 'old val = ', settings.settings[k], 'new val' ,v)
             settings.settings.update({k:v})
-        if k== 'utc_offset':
-             print("whaa utc offset only for testing !!!" , v)
     if changed:
         print("updated {} items".format(changed))        
         settings.save_settings()
@@ -246,6 +244,7 @@ active_font = settings.get_setting("active_font")
 hex_color = settings.get_setting(active_font)
 lcd = display.Display(active_font, hex_color)
 lcd.clear()
+leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("brightness")))
 
 t_utils = time_utils.Time_utils(int(settings.get_setting("utc_offset")))
 
@@ -280,12 +279,8 @@ for attempts in range(2):
         else:
             lcd.display_text(net.status_text(status)) # show error if not connected
             time.sleep(1)
-    except network.EADDRINUSE:
-        lcd.select_digit(4)
-        lcd.display_text("Net addr err")
-        lcd.select_digit(4)
-        lcd.display_text("restrt clock")
-        time.sleep(5)
+    except Exception as e:
+        print(e)
             
     
 if not net.is_connected():
