@@ -3,7 +3,7 @@ Pseudo Nixie LCD clock in Micropython for the Waveshare kit and Pi Pico W
 
 This project is based on the Pseudo Nixie clock by Gary Bleads: https://github.com/g0hjq/lcd_nixie_clock
 
-This version has automaic date and time setting synchronized with NTP and a web browser user interface to configure clock settings. 
+The version here  has automaic date and time setting synchronized with NTP and a web browser user interface to configure clock settings. 
 A Pi Pico W is required. If you want to use the clock with a non WiFI pico or prefer a more retro experience then Gary's repo is the place to go.
  
 ![image](https://github.com/g0hjq/lcd_nixie_clock/assets/37076748/554df180-edf5-486d-a488-68c63047eff1)
@@ -67,12 +67,13 @@ Additional 7-segment and dot-matrix like fonts in various colurs are generated b
 
 
 ## Installation
-The Thonny IDE is used to copy files to the clock.
+
+Use the Thonny IDE to upload the core, runtime font and additional files listed above to the root directory of the Raspberry Pi Pico.
+Do not copy the fonts directory or its contents. 
+
 >[!WARNING]
 > Always disconnect the clock's USB power lead whenever using the Pi Pico USB cable to connect to a computer or other power source.
->The clock can be run using either the Pico USB cable or the POWER USB C connecter on the clock, but don't use both at the same time.   
-Use Thonny to upload the core, runtime font and additional files listed above to the root directory of the Raspberry Pi Pico.
-Do not copy the fonts directory or its contents. 
+>The clock can be run using either the Pico USB cable or the POWER USB C connecter on the clock, but don't use both at the same time.
 
 Open secrets.py in the Thonny editor and modify the SSID and PASSWORD to match the credentials needed for the WiFI access point you want the clock to connect to.
 Open main.py in Thonny and press RUN. 
@@ -87,6 +88,6 @@ When running from the POWER USB connector, the clock will start automatically wh
 
 ## Clock Configuration
 - Configuration of the clock settings is achieved through a web browser. Enter the IP address displayed when the clock is powered up into your browser's address bar. 
-![browser ui](https://github.com/michaelmargolis/lcd_ntp_nixie_clock/blob/master/Docs/browser_ui.jpg)
+![browser ui](https://github.com/michaelmargolis/lcd_ntp_nixie_clock/blob/main/docs/browser_ui.jpg)
 - The clock picture may take a while to load, a future development may be able to speed this up.
 
