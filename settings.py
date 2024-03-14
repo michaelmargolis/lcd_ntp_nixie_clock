@@ -41,7 +41,8 @@ settings = {
     "7seg": "#00ffff",
     "brightness" : "50",
     "led_color": "#ff7b00",
-    "led_alarm_color": "#cccccc",
+    "led_brightness" : "20",
+    "led_alarm_color" : "#cccccc",
     "24_hour" : "24",
     "show_secs" : "No",
     "show_date" : "No",
@@ -62,8 +63,15 @@ dst_options = OrderedDict([
 """
 tags are used to define the browser user interface
 first touple element is key to settings dictionary
-second element is 'R' if radio button,  'T' if text field
-'F' if font selection, '-' if blank line seperator
+second element is:
+ 'N' if numeric input
+ 'R' if radio button,
+ 'F' if font selection,
+ 'L' if LED colour
+ 'D' if selection dropdown
+ '-' if blank line seperator
+third element is text prompt
+final elements are guiidance for range of values 
 """
 
 tags = ( 
@@ -75,6 +83,7 @@ tags = (
             ('brightness', 'N','Brightness %', 1, 100),
             ('', '-'),
             ('led_color', 'L','LED color'),
+            ('led_brightness', 'N','LED brightness %', 1, 100),
             ('', '-'),
             ('24_hour', 'R','Hours Format', '12', '24'),
             ('show_secs', 'R','Show Seconds', 'Yes', 'No'),

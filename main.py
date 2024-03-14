@@ -97,7 +97,7 @@ class Alarm:
     def reset_trigger(self):
         # Stop the alarm
         self.buzzer.duty_u16(0)
-        leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("brightness")))
+        leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("led_brightness")))
         self.triggered  = False
         
        
@@ -228,7 +228,7 @@ def web_callback(data):
     if changed:
         print("updated {} items".format(changed))        
         settings.save_settings()
-        leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("brightness")))
+        leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("led_brightness")))
         clock.update_display_state()
     
     micropython.mem_info()         
@@ -244,7 +244,7 @@ active_font = settings.get_setting("active_font")
 hex_color = settings.get_setting(active_font)
 lcd = display.Display(active_font, hex_color)
 lcd.clear()
-leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("brightness")))
+leds.set_color(settings.get_setting("led_color"), int(settings.get_setting("led_brightness")))
 
 t_utils = time_utils.Time_utils(int(settings.get_setting("utc_offset")))
 

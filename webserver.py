@@ -258,8 +258,8 @@ class my_HTTPserver(object):
             line+= '''<tr><td><input type="radio" name="active_font" value="{}" {} id={}>
                     <label for="{}">{}</label></td>
                     <td><input type="color" id="{}" name="{}" value="{}"/>
-                    <label for="color_id">color</label></td></tr><tr>''' \
-                    .format(id, checked, id, id, text, color_id, color_id, color)
+                    <label for="color_id">{}</label></td></tr><tr>''' \
+                    .format(id, checked, id, id, text, color_id, color_id, color, color)
                 
         return line    
             
