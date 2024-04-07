@@ -77,7 +77,7 @@ class Alarm:
         alarm_hour = int(self.get_setting("alarm_hour"))
         alarm_min = int(self.get_setting("alarm_min"))
         # print(alarm_enabled, alarm_hour,hour, alarm_min,minute,sec)
-        if alarm_enabled and alarm_hour == hour and alarm_min == minute and sec == 0:
+        if alarm_enabled == 'Yes' and alarm_hour == hour and alarm_min == minute and sec == 0:
             self.triggered = True
         if self.triggered:
             if (sec % 2) == 0:
@@ -93,6 +93,8 @@ class Alarm:
                 self.buzzer.freq(2400)
                 time.sleep(0.05)
             self.buzzer.duty_u16(0)             
+            if alarm_min != minute:
+                self.triggered  = False # turn off alarm after one minute
         
     def reset_trigger(self):
         # Stop the alarm
