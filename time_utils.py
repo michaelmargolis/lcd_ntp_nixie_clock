@@ -31,16 +31,18 @@ except ImportError:
 days = ('Mon','Tue','Wed','Thr','Fri','Sat','Sun')
 months = ('', 'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec') 
 
-UTC_OFFSET = 0 # hours UTC_OFFSEToffset to local time, ignore DST
     
 class Time_utils(object):
     def __init__(self, utc_offset, tz_region= 'EU'):
        self.tz_region = tz_region
-       self.tz_offset = utc_offset*3600
-       self.dst_offset_hrs = 0 
+       self.utc_offset = utc_offset * 3600
        print("TZ region set to", self.tz_region)
+       self.dst_offset_hrs = 0
        self.time_synced = None
-       self.time_sync_interval = 3660 * 1000 # ms between ntp sync (1 hr)
+       self.time_sync_interval = 3600 * 1000 # ms between ntp sync (1 hr)
+       
+    def set_utc_offset(self, offset_hrs):   
+        self.utc_offset = offset_hrs * 3600
 
     def zfl(self, s, width):
         # Pads given string with leading 0's to suit the specified width
@@ -81,9 +83,8 @@ class Time_utils(object):
             self.dst_offset_hrs  = 1
         else:
             self.dst_offset = 0
-        self.tz_offset =  UTC_OFFSET *3600 + self.dst_offset_hrs*3600   
         
-        local_ts = ts + self.tz_offset
+        local_ts = ts + self.utc_offset + self.dst_offset_hrs*3600 
         tm = time.localtime(local_ts)
         rtc_setter(tm)
         self.time_synced = time.ticks_ms()
