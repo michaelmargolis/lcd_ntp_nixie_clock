@@ -19,6 +19,8 @@
 import socket
 import os
 import errno
+import sys
+import time
 
 try:
     from micropython import const
@@ -71,7 +73,7 @@ content_types = dict(
     default='text/plain',
     )
 
-READ_BUF_LEN = 512
+READ_BUF_LEN = 1024
 PAGE_BUF_LEN = 5120 # max bytes for an html page
 
 page_buf = bytearray(PAGE_BUF_LEN)
@@ -99,34 +101,96 @@ class my_HTTPserver(object):
         client = None
         try:
             client, addr = self.sock.accept()
+            client.setblocking(False)  # Set non-blocking mode
+            print(f"Connection from {addr}")
+
+            request = b""
+            start_time = time.ticks_ms()
+            timeout = 2000  # 2 seconds timeout 
+
+            while True:
+                try:
+                    part = client.recv(2048)
+                    if part:
+                        request += part
+                        start_time = time.ticks_ms()  # Reset timer on successful reception
+                    elif time.ticks_diff(time.ticks_ms(), start_time) > timeout:
+                        print("Receiving: Timeout waiting for data")
+                        break
+
+                except OSError as e:
+                    if e.args[0] == errno.EAGAIN:
+                        if time.ticks_diff(time.ticks_ms(), start_time) > timeout:
+                            print("Eagain: Timeout waiting for data")
+                            break
+                        time.sleep_ms(100)
+                    else:
+                        print('Error in listen recv:', e)
+                        break
 
         except OSError as e:
-            if e.args[0] == errno.EAGAIN or e.args[0] == errno.EWOULDBLOCK:
-                pass
-            elif 'timed out' in e.args:
+            if e.args[0] == errno.EAGAIN:
                 pass
             else:
-                print('in listen', e)
-                if cl:
-                    cl.close()
-                    print('connection closed')
+                print('Error in listen:', e)
+
+        finally:
+            if client:
+                if request:
+                    self.process_request(request.decode('utf-8'), client)
+                client.close()
+
+
+    def process_request(self, request, client):
+        if request.startswith('GET'):
+            self.process_get(request, client)
+        elif request.startswith('POST'):
+            self.process_post(request, client)
         else:
-            # A client has connected
-            print(f"Connection from {addr}")
-            # Handle the client connection
-            client.setblocking(True)  # Optionally set the client socket to blocking for simplicity
-            request = client.recv(2048)
-            r = str(request)
-            if len(r) > 0:
-                if r[:6] == "b'GET ":
-                    self.process_get(r, client)
-                elif r[:6] == "b'POST":
-                    self.process_post(r, client)
-                else:
-                    print("unhandled request", r[:6])
-                    return            
+            print("Unhandled request method:", request.split(' ', 1)[0])
+
+    def process_get(self, request, client):
+        try:
+            request_line = request.split('\r\n', 1)[0]
+            _, path, _ = request_line.split(' ', 2)
+
+            if path.startswith('/images/'): # todo add this if using favicon-> or path == '/favicon.ico':
+                filename = path[1:]   # Remove the leading slash
+                self.send_file(client, filename)
+            elif path == '/':
+                page = self.append_to_page_buf((html_start, self.get_input_tags(), html_end))
+                self.send_page(client, page)
+            else:
+                client.send(b'HTTP/1.1 404 Not Found\r\n\r\n')
+                print('Unhandled GET request:', path)
+        except ValueError:
+            client.send(b'HTTP/1.1 400 Bad Request\r\n\r\n')
+        except Exception as e:
+            print('Error processing GET request:', str(e))
+            sys.print_exception(e) # traceback
+            client.send(b'HTTP/1.1 500 Internal Server Error\r\n\r\n')
+        finally:
+
             client.close()
-        
+
+    def process_post(self, request, client):
+        try:
+            headers, body = request.split('\r\n\r\n', 1)
+            data = {k: v for k, v in (item.split('=') for item in body.split('&') if '=' in item)}
+            if 'asFont' in data:
+                if data['asFont'] == 'on':
+                    data['led_color'] = data[data['active_font']]
+                del data['asFont']
+
+            self.update_func(data)
+            page = self.append_to_page_buf((html_start, self.get_input_tags(), html_end))
+            self.send_page(client, page)
+
+        except Exception as e:
+            print('Error processing POST request:', str(e))
+            client.send(b'HTTP/1.1 500 Internal Server Error\r\n\r\n')
+        finally:
+            client.close()
 
     def append_to_page_buf(self, byte_arrays):
         global page_buf
@@ -155,49 +219,20 @@ class my_HTTPserver(object):
         page = self.append_to_page_buf((html_start,self.get_input_tags(),html_end))
         cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
         cl.send(page)
-        
-    def process_get(self, response, cl):
-      
-        r = response[:32].split(' ',3)
-        if r[1][1:7] == 'images':
-            fname = r[1][1:]
-            self.send_file(cl, fname)
-                 
-        elif r[2][:4] == 'HTTP':
-            page = self.append_to_page_buf((html_start,self.get_input_tags(),html_end))
-            self.send_page(cl, page)
-            
-        elif len(r) > 0: 
-            print('unhandled:', r)      
-     
-    def process_post(self, request, cl):
-        start = request.find('Referer')
-        start = request.find('\\r\\n\\r\\n', start)+ 8
-        end = request.find('\\r\\n', start)
-        fields = request[start:end]
-        fields = fields.split('@')
-        fields = fields[0].split('&')
-        #print(fields, fields[-1])
-        d = {}
-        for item in fields:
-            if '=' in item:
-                k,v = item.split("=")
-                d[k] = v
-    
-        # d = dict(item.split("=") for item in fields)
-        if 'asFont' in d:
-            if d['asFont'] == 'on':
-                font = d['active_font'] #set color to font if selected 
-                d['led_color'] = d[font]
-            del d['asFont'] # don't send the asFont key
-        self.update_func(d) # update config
-        page = self.append_to_page_buf((html_start,self.get_input_tags(),html_end))
-        self.send_page(cl, page)
+
+    def get_content_length(self, headers):
+        for line in headers.split('\r\n'):
+            if line.lower().startswith('content-length'):
+                return int(line.split(":")[1].strip())
+        return 0
     
     def send_file(self, cl, filename, binary=True):
         content_type = content_types.get(filename.split('.')[-1], content_types['default'])
-        file_size = os.stat(filename)[6]
-
+        try:
+           file_size = os.stat(filename)[6]
+        except OSError as e:            
+            print(f"Error accessing file {filename}: {str(e)}")          
+        
         # Prepare the HTTP response headers
         headers = [
             b"HTTP/1.1 200 OK\r\n",
@@ -211,10 +246,24 @@ class my_HTTPserver(object):
         try:
             with open(filename, 'rb' if binary else 'r') as f:
                 while True:
-                    data = f.read(READ_BUF_LEN)  # Ensure READ_BUF_LEN is defined elsewhere
+                    data = f.read(READ_BUF_LEN)  
                     if not data:
                         break
-                    cl.send(data)
+
+                    while True:
+                        try:
+                            cl.sendall(data)  # Use sendall to ensure all data is sent
+                            break
+                        except OSError as e:
+                            if e.args[0] == errno.EAGAIN:
+                                continue  # Retry sending when the socket is temporarily full
+                            elif e.args[0] == errno.ETIMEDOUT:
+                                print("Socket send operation timed out")
+                                return
+                            else:
+                                raise  # Raise other errors as appropriate
+
+
         except OSError as e:
             if e.args[0] == errno.ETIMEDOUT:
                 pass
