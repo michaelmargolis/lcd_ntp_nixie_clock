@@ -24,7 +24,7 @@ See wifi and time_utils modules for more info
 """
 net = wifi.wifi(10)
 
-
+DEBUG_MEM = False
 #=======================================================================
 # Helper Functions
 #=======================================================================
@@ -92,7 +92,7 @@ class Alarm:
                 time.sleep(0.05)
                 self.buzzer.freq(2400)
                 time.sleep(0.05)
-            self.buzzer.duty_u16(0)             
+            self.buzzer.duty_u16(0)
             if alarm_min != minute:
                 self.triggered  = False # turn off alarm after one minute
         
@@ -203,7 +203,12 @@ class Clock():
         self.lcd.set_font(self.active_font, hex_color)
         self.info_text = None
         self.update_info_text()
- 
+          
+        t_utils.set_utc_offset(int(self.get_setting("utc_offset")))
+        t_utils.set_clock(self.rtc_setter)
+        hr, mins, sec = self.rtc_ds3231.localtime()[3:6]
+        self.show_time(hr, mins, sec)
+        
     def show_ip_addr(self, addr, wait_time):
         octets= ["This IP Addr",] + addr.split(".")
         for i in range(len(octets)):
@@ -216,6 +221,11 @@ class Clock():
         hr, mins, sec = self.rtc_ds3231.localtime()[3:6]
         self.show_time(hr, mins, sec)
         self.alarm.check(hr, mins, sec)
+        
+        if DEBUG_MEM:  # show heap every 10 minutes
+            if mins %10 == 0 and sec == 0:
+                print(hr, mins, sec)
+                micropython.mem_info() 
      
 def web_callback(data):
     # update settings with k,v pairs in the given dictionary
